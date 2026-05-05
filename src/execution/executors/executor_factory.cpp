@@ -6,6 +6,7 @@
 #include "onebase/execution/executors/insert_executor.h"
 #include "onebase/execution/executors/limit_executor.h"
 #include "onebase/execution/executors/nested_loop_join_executor.h"
+#include "onebase/execution/executors/projection_executor.h"
 #include "onebase/execution/executors/seq_scan_executor.h"
 #include "onebase/execution/executors/sort_executor.h"
 #include "onebase/execution/executors/update_executor.h"
@@ -73,6 +74,12 @@ auto ExecutorFactory::CreateExecutor(ExecutorContext *exec_ctx, const AbstractPl
       auto *limit_plan = dynamic_cast<const LimitPlanNode *>(plan.get());
       auto child = CreateExecutor(exec_ctx, limit_plan->GetChildPlan());
       return std::make_unique<LimitExecutor>(exec_ctx, limit_plan, std::move(child));
+    }
+
+    case PlanType::PROJECTION: {
+      auto *projection_plan = dynamic_cast<const ProjectionPlanNode *>(plan.get());
+      auto child = CreateExecutor(exec_ctx, projection_plan->GetChildPlan());
+      return std::make_unique<ProjectionExecutor>(exec_ctx, projection_plan, std::move(child));
     }
 
     default:

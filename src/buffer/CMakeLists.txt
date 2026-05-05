@@ -3,4 +3,9 @@ add_library(onebase_buffer
   buffer_pool_manager.cpp
   page_guard.cpp
 )
-target_link_libraries(onebase_buffer PUBLIC onebase_common)
+
+target_link_libraries(onebase_buffer
+  PUBLIC
+    onebase_common
+    onebase_storage
+)

@@ -7,36 +7,100 @@ LRUKReplacer::LRUKReplacer(size_t num_frames, size_t k)
     : max_frames_(num_frames), k_(k) {}
 
 auto LRUKReplacer::Evict(frame_id_t *frame_id) -> bool {
-  // TODO(student): Implement LRU-K eviction policy
-  // - Find the frame with the largest backward k-distance
-  // - Among frames with fewer than k accesses, evict the one with earliest first access
-  // - Only consider evictable frames
-  throw NotImplementedException("LRUKReplacer::Evict");
+  std::scoped_lock<std::mutex> lock(latch_);
+
+  frame_id_t victim = -1;
+  size_t min_timestamp = std::numeric_limits<size_t>::max(); // 用于处理距离为 +inf 的情况
+  size_t max_k_distance = 0; // 用于处理距离有限的情况
+  bool found_inf = false;
+
+  for (auto const &[fid, entry] : entries_) {
+    if (!entry.is_evictable_) {
+      continue;
+    }
+
+    // 类别 1: 访问次数少于 K 次 (k-distance = +infinity)
+    if (entry.history_.size() < k_) {
+      found_inf = true;
+      if (entry.history_.front() < min_timestamp) {
+        min_timestamp = entry.history_.front();
+        victim = fid;
+      }
+    } 
+    // 类别 2: 访问次数 >= K 次 (有限 k-distance)
+    else if (!found_inf) {
+      size_t k_distance = current_timestamp_ - entry.history_.front();
+      if (k_distance > max_k_distance) {
+        max_k_distance = k_distance;
+        victim = fid;
+      }
+    }
+  }
+
+  if (victim == -1) {
+    return false;
+  }
+
+  // 执行驱逐：从 entries 中移除并减少计数
+  entries_.erase(victim);
+  curr_size_--;
+  *frame_id = victim;
+  return true;
 }
 
 void LRUKReplacer::RecordAccess(frame_id_t frame_id) {
-  // TODO(student): Record a new access for frame_id at current timestamp
-  // - If frame_id is new, create an entry
-  // - Add current_timestamp_ to the frame's history
-  // - Increment current_timestamp_
-  throw NotImplementedException("LRUKReplacer::RecordAccess");
+  std::scoped_lock<std::mutex> lock(latch_);
+
+  if (static_cast<size_t>(frame_id) >= max_frames_) {
+    throw std::invalid_argument("Invalid frame_id");
+  }
+
+  auto &entry = entries_[frame_id];
+  entry.history_.push_back(current_timestamp_);
+
+  // 如果历史记录超过 K，移除最旧的
+  if (entry.history_.size() > k_) {
+    entry.history_.pop_front();
+  }
+
+  current_timestamp_++;
 }
 
 void LRUKReplacer::SetEvictable(frame_id_t frame_id, bool set_evictable) {
-  // TODO(student): Set whether a frame is evictable
-  // - Update curr_size_ accordingly
-  throw NotImplementedException("LRUKReplacer::SetEvictable");
+  std::scoped_lock<std::mutex> lock(latch_);
+
+  if (entries_.find(frame_id) == entries_.end()) {
+    return;
+  }
+
+  auto &entry = entries_[frame_id];
+  // 仅在状态发生变化时更新 curr_size_
+  if (set_evictable && !entry.is_evictable_) {
+    curr_size_++;
+  } else if (!set_evictable && entry.is_evictable_) {
+    curr_size_--;
+  }
+  entry.is_evictable_ = set_evictable;
 }
 
 void LRUKReplacer::Remove(frame_id_t frame_id) {
-  // TODO(student): Remove a frame from the replacer
-  // - The frame must be evictable; throw if not
-  throw NotImplementedException("LRUKReplacer::Remove");
+  std::scoped_lock<std::mutex> lock(latch_);
+
+  auto it = entries_.find(frame_id);
+  if (it == entries_.end()) {
+    return;
+  }
+
+  if (!it->second.is_evictable_) {
+    throw std::runtime_error("Cannot remove a non-evictable frame");
+  }
+
+  entries_.erase(it);
+  curr_size_--;
 }
 
 auto LRUKReplacer::Size() const -> size_t {
-  // TODO(student): Return the number of evictable frames
-  throw NotImplementedException("LRUKReplacer::Size");
+  return curr_size_;
 }
 
 }  // namespace onebase

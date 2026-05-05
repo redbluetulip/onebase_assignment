@@ -1,5 +1,4 @@
 #include "onebase/execution/executors/seq_scan_executor.h"
-#include "onebase/common/exception.h"
 
 namespace onebase {
 
@@ -7,17 +6,44 @@ SeqScanExecutor::SeqScanExecutor(ExecutorContext *exec_ctx, const SeqScanPlanNod
     : AbstractExecutor(exec_ctx), plan_(plan) {}
 
 void SeqScanExecutor::Init() {
-  // TODO(student): Initialize the sequential scan
-  // - Get the table from catalog using plan_->GetTableOid()
-  // - Set up iterator to table_heap->Begin()
-  throw NotImplementedException("SeqScanExecutor::Init");
+  // 1) Get table info
+  auto *catalog = GetExecutorContext()->GetCatalog();
+  auto *table_info = catalog->GetTable(plan_->GetTableOid());
+  table_info_ = table_info;
+
+  // 2) Initialize iterator
+  iter_ = table_info_->table_->Begin();
 }
 
 auto SeqScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
-  // TODO(student): Return the next tuple from the table
-  // - Advance iterator, skip tuples that don't match predicate
-  // - Return false when no more tuples
-  throw NotImplementedException("SeqScanExecutor::Next");
+  auto *table_heap = table_info_->table_.get();
+  auto end = table_heap->End();
+
+  while (iter_ != end) {
+    Tuple cur = *iter_;
+    ++iter_;
+
+    // Set rid
+    if (rid != nullptr) {
+      *rid = cur.GetRID();
+    }
+
+    // Predicate filter (if any)
+    if (plan_->GetPredicate() != nullptr) {
+      const auto *schema = &table_info_->schema_;
+      auto pred_val = plan_->GetPredicate()->Evaluate(&cur, schema);
+      if (!pred_val.GetAsBoolean())  {  // if not satisfied, skip
+        continue;
+      }
+    }
+
+    if (tuple != nullptr) {
+      *tuple = cur;
+    }
+    return true;
+  }
+
+  return false;
 }
 
 }  // namespace onebase
