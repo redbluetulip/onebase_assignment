@@ -38,7 +38,7 @@ static void HandleQuery(onebase::OneBaseInstance &instance,
     Binder binder(instance.GetCatalog());
     auto plan = binder.BindQuery(sql);
 
-    Optimizer optimizer;
+    Optimizer optimizer(instance.GetCatalog());
     plan = optimizer.Optimize(plan);
 
     std::vector<Tuple> result_set;

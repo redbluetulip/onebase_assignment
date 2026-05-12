@@ -121,6 +121,24 @@ You need to implement the following for each of BasicPageGuard, ReadPageGuard, a
 | `operator=(Guard &&)` | Move assignment operator | ★★☆ |
 | `Drop()` | Release resources (unlock + unpin) | ★★☆ |
 
+## 3.1 Student Implementation Scope
+
+Students are expected to complete the following source files directly:
+
+- `src/buffer/lru_k_replacer.cpp`
+  Implement `Evict`, `RecordAccess`, `SetEvictable`, `Remove`, and `Size`.
+- `src/buffer/buffer_pool_manager.cpp`
+  Implement `NewPage`, `FetchPage`, `UnpinPage`, `DeletePage`, `FlushPage`, and `FlushAllPages`.
+- `src/buffer/page_guard.cpp`
+  Implement move assignment and `Drop()` for `BasicPageGuard`, `ReadPageGuard`, and `WritePageGuard`.
+
+The expected outcome of Lab 1 is that students can:
+
+- manage page residency with `page_table_`, `free_list_`, and the replacer together,
+- correctly flush dirty pages before eviction,
+- maintain accurate pin counts and evictable state,
+- rely on RAII guards instead of manual pin/unpin and latch release.
+
 ## 4. Implementation Guide
 
 ### 4.1 LRU-K Replacer

@@ -10,6 +10,7 @@
 #include "onebase/execution/executors/seq_scan_executor.h"
 #include "onebase/execution/executors/sort_executor.h"
 #include "onebase/execution/executors/update_executor.h"
+#include "onebase/execution/executors/utility_executor.h"
 #include "onebase/execution/plans/plan_nodes.h"
 #include <stdexcept>
 
@@ -76,11 +77,17 @@ auto ExecutorFactory::CreateExecutor(ExecutorContext *exec_ctx, const AbstractPl
       return std::make_unique<LimitExecutor>(exec_ctx, limit_plan, std::move(child));
     }
 
+
     case PlanType::PROJECTION: {
       auto *projection_plan = dynamic_cast<const ProjectionPlanNode *>(plan.get());
       auto child = CreateExecutor(exec_ctx, projection_plan->GetChildPlan());
       return std::make_unique<ProjectionExecutor>(exec_ctx, projection_plan, std::move(child));
     }
+
+
+    case PlanType::UTILITY:
+      return std::make_unique<UtilityExecutor>(
+          exec_ctx, dynamic_cast<const UtilityPlanNode *>(plan.get()));
 
     default:
       throw std::runtime_error("Unknown plan type in ExecutorFactory");

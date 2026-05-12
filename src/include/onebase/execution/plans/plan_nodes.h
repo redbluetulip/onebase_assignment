@@ -23,17 +23,23 @@ class SeqScanPlanNode : public AbstractPlanNode {
 
 class IndexScanPlanNode : public AbstractPlanNode {
  public:
-  IndexScanPlanNode(Schema output_schema, table_oid_t table_oid, index_oid_t index_oid)
+  IndexScanPlanNode(Schema output_schema, table_oid_t table_oid, index_oid_t index_oid,
+                    AbstractExpressionRef lookup_key, AbstractExpressionRef predicate = nullptr)
       : AbstractPlanNode(std::move(output_schema), {}),
-        table_oid_(table_oid), index_oid_(index_oid) {}
+        table_oid_(table_oid), index_oid_(index_oid), lookup_key_(std::move(lookup_key)),
+        predicate_(std::move(predicate)) {}
 
   auto GetType() const -> PlanType override { return PlanType::INDEX_SCAN; }
   auto GetTableOid() const -> table_oid_t { return table_oid_; }
   auto GetIndexOid() const -> index_oid_t { return index_oid_; }
+  auto GetLookupKey() const -> const AbstractExpressionRef & { return lookup_key_; }
+  auto GetPredicate() const -> const AbstractExpressionRef & { return predicate_; }
 
  private:
   table_oid_t table_oid_;
   index_oid_t index_oid_;
+  AbstractExpressionRef lookup_key_;
+  AbstractExpressionRef predicate_;
 };
 
 class InsertPlanNode : public AbstractPlanNode {
@@ -183,6 +189,41 @@ class ProjectionPlanNode : public AbstractPlanNode {
 
  private:
   std::vector<AbstractExpressionRef> expressions_;
+};
+
+enum class UtilityType {
+  CREATE_INDEX,
+  DROP_INDEX,
+  SHOW_TABLES,
+  SHOW_INDEXES,
+  SHOW_SCHEMA,
+};
+
+class UtilityPlanNode : public AbstractPlanNode {
+ public:
+  UtilityPlanNode(Schema output_schema, UtilityType utility_type, std::string table_name = "",
+                  std::string index_name = "", std::vector<uint32_t> key_attrs = {},
+                  std::vector<std::string> object_names = {}, bool missing_ok = false)
+      : AbstractPlanNode(std::move(output_schema), {}),
+        utility_type_(utility_type), table_name_(std::move(table_name)),
+        index_name_(std::move(index_name)), key_attrs_(std::move(key_attrs)),
+        object_names_(std::move(object_names)), missing_ok_(missing_ok) {}
+
+  auto GetType() const -> PlanType override { return PlanType::UTILITY; }
+  auto GetUtilityType() const -> UtilityType { return utility_type_; }
+  auto GetTableName() const -> const std::string & { return table_name_; }
+  auto GetIndexName() const -> const std::string & { return index_name_; }
+  auto GetKeyAttrs() const -> const std::vector<uint32_t> & { return key_attrs_; }
+  auto GetObjectNames() const -> const std::vector<std::string> & { return object_names_; }
+  auto GetMissingOk() const -> bool { return missing_ok_; }
+
+ private:
+  UtilityType utility_type_;
+  std::string table_name_;
+  std::string index_name_;
+  std::vector<uint32_t> key_attrs_;
+  std::vector<std::string> object_names_;
+  bool missing_ok_;
 };
 
 }  // namespace onebase

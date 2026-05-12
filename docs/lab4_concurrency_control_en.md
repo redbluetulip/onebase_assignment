@@ -109,6 +109,20 @@ queue.cv_.wait(lock, [&]() {
 | `LockUpgrade(txn, rid)` | Upgrade the transaction's shared lock to an exclusive lock | ★★★★ |
 | `Unlock(txn, rid)` | Release the transaction's lock on the RID | ★★★ |
 
+## 3.1 Student Implementation Scope
+
+Students are expected to complete the lock manager in:
+
+- `src/concurrency/lock_manager.cpp`
+  Implement `LockShared`, `LockExclusive`, `LockUpgrade`, and `Unlock`.
+
+The expected outcome of Lab 4 is that students can:
+
+- enforce the `GROWING -> SHRINKING` two-phase locking protocol,
+- implement shared/exclusive compatibility and blocking wake-up behavior,
+- handle single-upgrader semantics for lock upgrade,
+- keep transaction lock sets and request queues consistent on success, wait, abort, and unlock.
+
 ## 4. Implementation Guide
 
 ### 4.1 LockShared(Transaction *txn, const RID &rid)

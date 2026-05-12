@@ -2,6 +2,7 @@
 
 #include <memory>
 
+#include "onebase/execution/expressions/constant_value_expression.h"
 #include "onebase/execution/expressions/column_value_expression.h"
 #include "onebase/execution/expressions/comparison_expression.h"
 #include "onebase/execution/plans/plan_nodes.h"
@@ -15,7 +16,59 @@ auto Optimizer::Optimize(AbstractPlanNodeRef plan) -> AbstractPlanNodeRef {
   }
 
   // Apply optimization rules
+  plan = OptimizeSeqScanToIndexScan(plan);
   plan = OptimizeNLJToHashJoin(plan);
+
+  return plan;
+}
+
+auto Optimizer::OptimizeSeqScanToIndexScan(AbstractPlanNodeRef plan) -> AbstractPlanNodeRef {
+  if (catalog_ == nullptr || plan->GetType() != PlanType::SEQ_SCAN) {
+    return plan;
+  }
+
+  auto *scan = dynamic_cast<SeqScanPlanNode *>(plan.get());
+  if (scan == nullptr || scan->GetPredicate() == nullptr) {
+    return plan;
+  }
+
+  auto *cmp = dynamic_cast<ComparisonExpression *>(scan->GetPredicate().get());
+  if (cmp == nullptr || cmp->GetComparisonType() != ComparisonType::Equal) {
+    return plan;
+  }
+
+  auto *left_col = dynamic_cast<ColumnValueExpression *>(cmp->GetChildAt(0).get());
+  auto *right_col = dynamic_cast<ColumnValueExpression *>(cmp->GetChildAt(1).get());
+  auto *left_const = dynamic_cast<ConstantValueExpression *>(cmp->GetChildAt(0).get());
+  auto *right_const = dynamic_cast<ConstantValueExpression *>(cmp->GetChildAt(1).get());
+
+  uint32_t indexed_col = UINT32_MAX;
+  AbstractExpressionRef lookup_key;
+  if (left_col != nullptr && right_const != nullptr) {
+    indexed_col = left_col->GetColIdx();
+    lookup_key = cmp->GetChildAt(1);
+  } else if (right_col != nullptr && left_const != nullptr) {
+    indexed_col = right_col->GetColIdx();
+    lookup_key = cmp->GetChildAt(0);
+  } else {
+    return plan;
+  }
+
+  auto *table_info = catalog_->GetTable(scan->GetTableOid());
+  if (table_info == nullptr) {
+    return plan;
+  }
+
+  for (auto *index_info : catalog_->GetTableIndexes(table_info->name_)) {
+    if (!index_info->SupportsPointLookup()) {
+      continue;
+    }
+    if (index_info->GetLookupAttr() != indexed_col) {
+      continue;
+    }
+    return std::make_shared<IndexScanPlanNode>(
+        scan->GetOutputSchema(), scan->GetTableOid(), index_info->oid_, lookup_key, scan->GetPredicate());
+  }
 
   return plan;
 }

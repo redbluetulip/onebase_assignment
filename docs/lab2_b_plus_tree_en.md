@@ -157,148 +157,33 @@ The B+ Tree is a template class `BPlusTree<KeyType, ValueType, KeyComparator>`. 
 
 > **Note:** The current iterator design does not include a `BufferPoolManager*` member, which means the iterator cannot fetch pages through BPM. If you need to traverse across leaf nodes, you will need to modify the iterator header file to add the necessary member variables.
 
-## 4. Implementation Guide
+## 3.1 Student Implementation Scope
 
-### 4.1 Internal Page
+Students are expected to complete the B+ tree implementation in these files:
 
-**`Init(max_size)`:**
-```
-SetPageType(IndexPageType::INTERNAL_PAGE);
-SetSize(0);
-SetMaxSize(max_size);
-SetParentPageId(INVALID_PAGE_ID);
-```
+- `src/storage/page/b_plus_tree_internal_page.cpp`
+  Complete page-local operations such as lookup, insert/remove inside the page, split helpers, and redistribution helpers.
+- `src/storage/page/b_plus_tree_leaf_page.cpp`
+  Complete ordered insert/remove, exact lookup, split helpers, merge helpers, and leaf-to-leaf movement.
+- `src/storage/index/b_plus_tree.cpp`
+  Complete `Insert`, `Remove`, `GetValue`, `Begin()`, and `Begin(key)`, including root creation, split propagation, merge/redistribution, and root adjustment.
+- `src/storage/index/b_plus_tree_iterator.cpp`
+  Complete iterator dereference and increment so leaf pages can be scanned in key order.
 
-**`Lookup(key, comparator)`:**
+The expected outcome of Lab 2 is that students can:
 
-Find which child node the key should be routed to in an internal node.
+- maintain sorted keys inside internal and leaf pages,
+- preserve parent pointers and the leaf linked list during structural changes,
+- handle root split and root shrink correctly,
+- support point lookup, insert/delete rebalancing, and sequential iteration.
 
-Array layout: `[_, k1, k2, k3, ...]`, corresponding values `[p0, p1, p2, p3, ...]`
-- If `key < k1`, go to p0
-- If `k1 <= key < k2`, go to p1
-- And so on
+## 4. Implementation Notes
 
-```
-result = array_[0].second   // default to the first child
-for i = 1 to size-1:
-    if comparator(key, array_[i].first):   // key < array_[i].key
-        break
-    result = array_[i].second
-return result
-```
-
-**`InsertNodeAfter(old_value, key, new_value)`:**
-1. Find the index `idx` of `old_value`
-2. Shift elements in `[idx+1, size)` one position to the right
-3. Place `{key, new_value}` at position `idx+1`
-4. `IncreaseSize(1)`
-
-**`MoveHalfTo(recipient, middle_key)`:**
-```
-split_idx = size / 2   // for internal nodes
-Copy array_[split_idx+1 .. size-1] to recipient
-Set the first key of recipient to middle_key (the original array_[split_idx].key is pushed up to the parent)
-Adjust size
-```
-
-### 4.2 Leaf Page
-
-**`KeyIndex(key, comparator)`:**
-
-Find the first position >= key (sorted insertion point). You can use linear scan or binary search:
-
-```
-for i = 0 to size-1:
-    if !comparator(array_[i].first, key):  // array_[i].key >= key
-        return i
-return size
-```
-
-**`Insert(key, value, comparator)`:**
-1. Call `KeyIndex(key)` to find the insertion position `idx`
-2. If `idx < size && array_[idx].key == key`, return current size (duplicate key, do not insert)
-3. Shift elements in `[idx, size)` one position to the right
-4. Place `{key, value}` at position `idx`
-5. `IncreaseSize(1)`
-
-**`MoveHalfTo(recipient)`:**
-```
-split_idx = size / 2
-Copy array_[split_idx .. size-1] to recipient's array_[0..]
-Set recipient's next_page_id_ = this node's original next_page_id_
-Set this node's next_page_id_ to recipient's page_id
-Adjust size for both nodes
-```
-
-### 4.3 B+ Tree Core Operations
-
-**`GetValue(key, result)`:**
-1. If the tree is empty, return false
-2. Starting from the root node, use `Lookup()` to traverse downward until reaching a leaf node
-3. Call `Lookup(key, &value)` on the leaf node
-4. If found, add the value to the result vector and return true
-
-**Note:** Each time you access a page, you need to obtain it via `bpm_->FetchPage(page_id)` and release it with `bpm_->UnpinPage(page_id, false)` after use.
-
-**`Insert(key, value)`:**
-
-This is the most complex method. The core flow:
-
-```
-1. If the tree is empty:
-   a. Create a new leaf page as the root
-   b. Insert the key-value
-   c. Return true
-
-2. Find the leaf node (traverse downward from root)
-
-3. Insert the key-value into the leaf node
-   - If it is a duplicate key, return false
-
-4. If the leaf node overflows (size > max_size):
-   a. Create a new leaf node
-   b. Call MoveHalfTo to split
-   c. Push the first key of the new leaf node up to the parent
-   d. InsertIntoParent(old_leaf, key, new_leaf)
-
-5. InsertIntoParent handles recursively:
-   a. If the old node is the root, create a new root
-   b. Call InsertNodeAfter on the parent node
-   c. If the parent also overflows, continue splitting the parent (recursion)
-```
-
-**`Remove(key)`:**
-
-```
-1. Find the leaf node containing the key
-2. Remove the key from the leaf
-3. If the leaf size < min_size, adjustment is needed:
-   a. Try to Redistribute from the left or right sibling
-   b. If the sibling is not rich enough, Merge with the sibling
-   c. Merge may cause the parent node to also need adjustment (recurse upward)
-4. Special case: if the root node has only one child left, replace the root with the child
-```
-
-### 4.4 B+ Tree Iterator
-
-The iterator needs to be able to traverse all leaf nodes. Basic design:
-
-```
-Member variables:
-  page_id_   page_id of the current leaf node
-  index_     current index in the leaf node's array_
-
-operator++():
-  index_++
-  if index_ >= current leaf node's size:
-    page_id_ = current leaf node's next_page_id_
-    index_ = 0
-
-IsEnd():
-  return page_id_ == INVALID_PAGE_ID
-```
-
-> **Design Limitation:** The current iterator header file lacks a `BufferPoolManager*` pointer, so `operator*()` and `operator++()` cannot directly fetch page data through BPM. You need to add a `BufferPoolManager *bpm_` member to the header file to solve this problem, or consider caching the necessary data within the iterator.
+- Keep the node header fields, sizes, and parent links consistent whenever a page changes.
+- Preserve sorted order inside each page and maintain the leaf-level linked list.
+- Handle root split, root shrink, redistribution, and merge cases explicitly.
+- Always fetch pages through the buffer pool and unpin them after use.
+- The iterator should move across leaf pages without exposing internal page layout details.
 
 ## 5. Building and Testing
 

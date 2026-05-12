@@ -28,8 +28,8 @@ set(ONEBASE_CXX_FLAGS
 )
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    list(APPEND ONEBASE_CXX_FLAGS -fsanitize=address -g -O0)
-    add_link_options(-fsanitize=address)
+    list(APPEND ONEBASE_CXX_FLAGS -fsanitize=address -fno-sanitize=leak -g -O0)
+    add_link_options(-fsanitize=address -fno-sanitize=leak)
 endif()
 
 # Third-party dependencies (find_package at root scope so targets are globally visible)

@@ -107,6 +107,20 @@ queue.cv_.wait(lock, [&]() {
 | `LockUpgrade(txn, rid)` | 将事务的共享锁升级为排他锁 | ★★★★ |
 | `Unlock(txn, rid)` | 释放事务在 RID 上的锁 | ★★★ |
 
+## 3.1 学生实现范围
+
+学生应完成以下锁管理器实现：
+
+- `src/concurrency/lock_manager.cpp`
+  实现 `LockShared`、`LockExclusive`、`LockUpgrade`、`Unlock`。
+
+Lab 4 完成后，学生应能够：
+
+- 实现 `GROWING -> SHRINKING` 的两阶段锁协议，
+- 正确处理共享锁/排他锁兼容性与阻塞唤醒，
+- 保证同一资源的升级请求满足单升级者语义，
+- 在成功、等待、中止、解锁等路径下维护事务锁集合和请求队列一致性。
+
 ## 4. 实现指南
 
 ### 4.1 LockShared(Transaction *txn, const RID &rid)

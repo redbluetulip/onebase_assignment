@@ -47,6 +47,46 @@ struct AggCall {
   AbstractExpressionRef arg;  // may be nullptr for COUNT(*)
 };
 
+auto LowerCopy(std::string text) -> std::string {
+  std::transform(text.begin(), text.end(), text.begin(),
+                 [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+  return text;
+}
+
+  auto JoinStrings(const std::vector<std::string> &parts, const std::string &separator) -> std::string {
+    std::string joined;
+    for (size_t i = 0; i < parts.size(); ++i) {
+      if (i > 0) {
+        joined += separator;
+      }
+      joined += parts[i];
+    }
+    return joined;
+  }
+
+  auto NodeToQualifiedName(PGNode *node) -> std::string {
+    if (node == nullptr) {
+      return {};
+    }
+    if (node->type == duckdb_libpgquery::T_PGString) {
+      return strVal(node);
+    }
+    if (node->type == duckdb_libpgquery::T_PGList) {
+      std::vector<std::string> parts;
+      auto *list = reinterpret_cast<PGList *>(node);
+      PGListCell *cell;
+      foreach (cell, list) {
+        parts.push_back(NodeToQualifiedName(static_cast<PGNode *>(lfirst(cell))));
+      }
+      return JoinStrings(parts, ".");
+    }
+    if (node->type == duckdb_libpgquery::T_PGRangeVar) {
+      auto *range_var = reinterpret_cast<PGRangeVar *>(node);
+      return range_var->relname ? range_var->relname : "";
+    }
+    return {};
+  }
+
 // ---- Forward declarations of binding helpers ------------------------------
 
 auto BindExpression(PGNode *node, const std::vector<TableScope> &scopes) -> AbstractExpressionRef;
@@ -221,15 +261,30 @@ auto BindExpression(PGNode *node, const std::vector<TableScope> &scopes) -> Abst
 // Get lowercase string from func name
 auto GetFuncName(PGList *funcname) -> std::string {
   auto *node = static_cast<PGNode *>(lfirst(list_tail(funcname)));
-  std::string name = strVal(node);
-  std::transform(name.begin(), name.end(), name.begin(), ::tolower);
-  return name;
+  return LowerCopy(strVal(node));
 }
 
 // Helper: count schema (for INSERT/DELETE/UPDATE count return)
 auto CountSchema() -> Schema {
   return Schema({Column("count", TypeId::INTEGER)});
 }
+
+  auto CommandSchema() -> Schema {
+    return Schema({Column("command_tag", TypeId::VARCHAR)});
+  }
+
+  auto ShowTablesSchema() -> Schema {
+    return Schema({Column("table_name", TypeId::VARCHAR)});
+  }
+
+  auto ShowIndexesSchema() -> Schema {
+    return Schema({Column("index_name", TypeId::VARCHAR), Column("table_name", TypeId::VARCHAR),
+                   Column("columns", TypeId::VARCHAR)});
+  }
+
+  auto ShowSchemaSchema() -> Schema {
+    return Schema({Column("column_name", TypeId::VARCHAR), Column("column_type", TypeId::VARCHAR)});
+  }
 
 // Collect all columns from scopes as a single schema
 auto CollectAllColumns(const std::vector<TableScope> &scopes) -> Schema {
@@ -265,6 +320,91 @@ auto Binder::BindQuery(const std::string &sql) -> AbstractPlanNodeRef {
 
   auto *raw_stmt = static_cast<PGRawStmt *>(lfirst(list_head(parser.parse_tree)));
   auto *stmt = raw_stmt->stmt;
+
+  switch (stmt->type) {
+    case duckdb_libpgquery::T_PGIndexStmt: {
+      auto *index_stmt = reinterpret_cast<PGIndexStmt *>(stmt);
+      if (index_stmt->relation == nullptr || index_stmt->idxname == nullptr) {
+        throw std::runtime_error("Invalid CREATE INDEX statement");
+      }
+
+      auto *table_info = catalog_->GetTable(index_stmt->relation->relname);
+      if (table_info == nullptr) {
+        throw std::runtime_error("Table not found: " + std::string(index_stmt->relation->relname));
+      }
+
+      std::vector<uint32_t> key_attrs;
+      PGListCell *cell;
+      foreach (cell, index_stmt->indexParams) {
+        auto *index_elem = reinterpret_cast<PGIndexElem *>(lfirst(cell));
+        if (index_elem->name == nullptr || index_elem->expr != nullptr) {
+          throw std::runtime_error("Only column-based CREATE INDEX is supported");
+        }
+        auto column_idx = table_info->schema_.GetColumnIdx(index_elem->name);
+        if (column_idx == UINT32_MAX) {
+          throw std::runtime_error("Column not found: " + std::string(index_elem->name));
+        }
+        key_attrs.push_back(column_idx);
+      }
+
+      return std::make_shared<UtilityPlanNode>(
+          CommandSchema(), UtilityType::CREATE_INDEX, index_stmt->relation->relname,
+          index_stmt->idxname, key_attrs);
+    }
+
+    case duckdb_libpgquery::T_PGDropStmt: {
+      auto *drop_stmt = reinterpret_cast<PGDropStmt *>(stmt);
+      if (drop_stmt->removeType != PG_OBJECT_INDEX) {
+        break;
+      }
+
+      std::vector<std::string> object_names;
+      PGListCell *cell;
+      foreach (cell, drop_stmt->objects) {
+        auto *object_node = static_cast<PGNode *>(lfirst(cell));
+        auto name = NodeToQualifiedName(object_node);
+        if (!name.empty()) {
+          object_names.push_back(std::move(name));
+        }
+      }
+
+      return std::make_shared<UtilityPlanNode>(CommandSchema(), UtilityType::DROP_INDEX, "", "",
+                                               std::vector<uint32_t>{}, object_names,
+                                               drop_stmt->missing_ok);
+    }
+
+    case duckdb_libpgquery::T_PGVariableShowStmt: {
+      auto *show_stmt = reinterpret_cast<PGVariableShowStmt *>(stmt);
+
+      if (show_stmt->set != nullptr) {
+        std::string set_name = LowerCopy(show_stmt->set);
+        if (set_name == "__show_tables_expanded" || set_name == "__show_tables_from_database") {
+          return std::make_shared<UtilityPlanNode>(ShowTablesSchema(), UtilityType::SHOW_TABLES);
+        }
+      }
+
+      if (show_stmt->relation != nullptr) {
+        std::string relation_name = show_stmt->relation->relname;
+        std::string normalized_relation_name = LowerCopy(relation_name);
+        if (normalized_relation_name == "tables") {
+          return std::make_shared<UtilityPlanNode>(ShowTablesSchema(), UtilityType::SHOW_TABLES);
+        }
+        if (normalized_relation_name == "index" || normalized_relation_name == "indexes") {
+          return std::make_shared<UtilityPlanNode>(ShowIndexesSchema(), UtilityType::SHOW_INDEXES);
+        }
+
+        auto *table_info = catalog_->GetTable(relation_name);
+        if (table_info != nullptr) {
+          return std::make_shared<UtilityPlanNode>(ShowSchemaSchema(), UtilityType::SHOW_SCHEMA,
+                                                   relation_name);
+        }
+      }
+
+      break;
+    }
+    default:
+      break;
+  }
 
   switch (stmt->type) {
     case duckdb_libpgquery::T_PGSelectStmt: {
@@ -357,15 +497,23 @@ auto Binder::BindQuery(const std::string &sql) -> AbstractPlanNodeRef {
           auto *scan = dynamic_cast<SeqScanPlanNode *>(base_plan.get());
           auto *info = scopes[0].info;
           base_plan = std::make_shared<SeqScanPlanNode>(info->schema_, info->oid_, predicate);
+        } else if (base_plan->GetType() == PlanType::NESTED_LOOP_JOIN) {
+          auto *join = dynamic_cast<NestedLoopJoinPlanNode *>(base_plan.get());
+          AbstractExpressionRef combined_predicate = predicate;
+          if (join->GetPredicate() != nullptr) {
+            combined_predicate =
+                std::make_shared<LogicExpression>(join->GetPredicate(), predicate, LogicType::And);
+          }
+          base_plan = std::make_shared<NestedLoopJoinPlanNode>(
+              join->GetOutputSchema(), join->GetLeftPlan(), join->GetRightPlan(), combined_predicate);
         }
-        // For joins, the predicate is already in the join node (ON clause)
-        // If WHERE is separate from ON, we'd need a filter node, but our tests don't need this
       }
 
       // --- TARGET LIST: check for aggregates ---
       bool has_aggregates = false;
       std::vector<AggCall> agg_calls;
       std::vector<AbstractExpressionRef> output_exprs;
+      std::vector<std::string> output_names;
       bool is_star = false;
 
       if (select->targetList != nullptr) {
@@ -438,6 +586,15 @@ auto Binder::BindQuery(const std::string &sql) -> AbstractPlanNodeRef {
 
           // Regular expression (e.g., "id / 5" in GROUP BY target list)
           output_exprs.push_back(BindExpression(val_node, scopes));
+          if (res_target->name != nullptr) {
+            output_names.push_back(res_target->name);
+          } else if (val_node->type == duckdb_libpgquery::T_PGColumnRef) {
+            auto *colref = reinterpret_cast<PGColumnRef *>(val_node);
+            auto *tail = static_cast<PGNode *>(lfirst(list_tail(colref->fields)));
+            output_names.push_back(NodeToQualifiedName(tail));
+          } else {
+            output_names.push_back("col_" + std::to_string(output_names.size()));
+          }
         }
       }
 
@@ -512,7 +669,8 @@ auto Binder::BindQuery(const std::string &sql) -> AbstractPlanNodeRef {
       if (!is_star && !has_aggregates && !output_exprs.empty()) {
         std::vector<Column> proj_cols;
         for (size_t i = 0; i < output_exprs.size(); i++) {
-          proj_cols.emplace_back("col_" + std::to_string(i), output_exprs[i]->GetReturnType());
+          const auto &name = i < output_names.size() ? output_names[i] : ("col_" + std::to_string(i));
+          proj_cols.emplace_back(name, output_exprs[i]->GetReturnType());
         }
         Schema proj_schema(proj_cols);
         base_plan = std::make_shared<ProjectionPlanNode>(proj_schema, base_plan, output_exprs);
@@ -550,7 +708,11 @@ auto Binder::BindQuery(const std::string &sql) -> AbstractPlanNodeRef {
               throw std::runtime_error("Table not found: " + src_name);
             }
             sub_scopes.push_back({src_name, src_info, 0});
-            sub_plan = std::make_shared<SeqScanPlanNode>(src_info->schema_, src_info->oid_, nullptr);
+            AbstractExpressionRef sub_predicate;
+            if (sub_select->whereClause != nullptr) {
+              sub_predicate = BindExpression(sub_select->whereClause, sub_scopes);
+            }
+            sub_plan = std::make_shared<SeqScanPlanNode>(src_info->schema_, src_info->oid_, sub_predicate);
           }
         }
       } else if (sub_select->valuesLists != nullptr) {

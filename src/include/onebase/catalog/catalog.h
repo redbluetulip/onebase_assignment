@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -26,11 +27,38 @@ struct IndexInfo {
   std::string table_name_;
   index_oid_t oid_;
   std::vector<uint32_t> key_attrs_;
+  bool supports_point_lookup_{false};
+  std::unordered_map<int32_t, std::vector<RID>> int_rid_map_;
 
   IndexInfo(Schema key_schema, std::string name, std::string table_name,
             index_oid_t oid, std::vector<uint32_t> key_attrs)
       : key_schema_(std::move(key_schema)), name_(std::move(name)),
         table_name_(std::move(table_name)), oid_(oid), key_attrs_(std::move(key_attrs)) {}
+
+  auto SupportsPointLookup() const -> bool { return supports_point_lookup_; }
+  auto GetLookupAttr() const -> uint32_t { return key_attrs_.front(); }
+
+  auto LookupInteger(int32_t key) const -> const std::vector<RID> * {
+    auto it = int_rid_map_.find(key);
+    if (it == int_rid_map_.end()) {
+      return nullptr;
+    }
+    return &it->second;
+  }
+
+  auto InsertEntry(int32_t key, const RID &rid) -> void { int_rid_map_[key].push_back(rid); }
+
+  auto RemoveEntry(int32_t key, const RID &rid) -> void {
+    auto it = int_rid_map_.find(key);
+    if (it == int_rid_map_.end()) {
+      return;
+    }
+    auto &rids = it->second;
+    rids.erase(std::remove(rids.begin(), rids.end(), rid), rids.end());
+    if (rids.empty()) {
+      int_rid_map_.erase(it);
+    }
+  }
 };
 
 class Catalog {
@@ -44,8 +72,11 @@ class Catalog {
 
   auto CreateIndex(const std::string &index_name, const std::string &table_name,
                    const std::vector<uint32_t> &key_attrs) -> IndexInfo *;
+  auto DropIndex(const std::string &index_name, const std::string &table_name) -> bool;
   auto GetIndex(const std::string &index_name, const std::string &table_name) const -> IndexInfo *;
+  auto GetIndex(index_oid_t oid) const -> IndexInfo *;
   auto GetTableIndexes(const std::string &table_name) const -> std::vector<IndexInfo *>;
+  auto GetAllIndexes() const -> std::vector<IndexInfo *>;
 
  private:
   BufferPoolManager *bpm_;

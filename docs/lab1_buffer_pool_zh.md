@@ -120,6 +120,24 @@ Page Guard 使用 C++ RAII 模式自动管理页面的生命周期：
 | `operator=(Guard &&)` | 移动赋值运算符 | ★★☆ |
 | `Drop()` | 释放资源（解锁 + 取消引用） | ★★☆ |
 
+## 3.1 学生实现范围
+
+学生应直接完成以下源文件中的实现：
+
+- `src/buffer/lru_k_replacer.cpp`
+  实现 `Evict`、`RecordAccess`、`SetEvictable`、`Remove`、`Size`。
+- `src/buffer/buffer_pool_manager.cpp`
+  实现 `NewPage`、`FetchPage`、`UnpinPage`、`DeletePage`、`FlushPage`、`FlushAllPages`。
+- `src/buffer/page_guard.cpp`
+  为 `BasicPageGuard`、`ReadPageGuard`、`WritePageGuard` 实现移动赋值和 `Drop()`。
+
+Lab 1 完成后，学生应能够：
+
+- 协同维护 `page_table_`、`free_list_` 和 replacer，
+- 在淘汰前正确刷回脏页，
+- 维护准确的 pin count 和 evictable 状态，
+- 使用 RAII guard 代替手动 pin/unpin 与 latch 释放。
+
 ## 4. 实现指南
 
 ### 4.1 LRU-K Replacer
