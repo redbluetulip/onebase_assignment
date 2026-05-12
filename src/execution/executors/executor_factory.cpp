@@ -77,13 +77,11 @@ auto ExecutorFactory::CreateExecutor(ExecutorContext *exec_ctx, const AbstractPl
       return std::make_unique<LimitExecutor>(exec_ctx, limit_plan, std::move(child));
     }
 
-
     case PlanType::PROJECTION: {
       auto *projection_plan = dynamic_cast<const ProjectionPlanNode *>(plan.get());
       auto child = CreateExecutor(exec_ctx, projection_plan->GetChildPlan());
       return std::make_unique<ProjectionExecutor>(exec_ctx, projection_plan, std::move(child));
     }
-
 
     case PlanType::UTILITY:
       return std::make_unique<UtilityExecutor>(

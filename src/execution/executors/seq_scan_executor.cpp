@@ -38,7 +38,12 @@ auto SeqScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
     }
 
     if (tuple != nullptr) {
-      *tuple = cur;
+      std::vector<Value> values;
+      values.reserve(table_info_->schema_.GetColumnCount());
+      for (uint32_t i = 0; i < table_info_->schema_.GetColumnCount(); ++i) {
+        values.push_back(cur.GetValue(&table_info_->schema_, i));
+      }
+      *tuple = Tuple(std::move(values));
     }
     return true;
   }
